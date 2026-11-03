@@ -9,7 +9,7 @@ DATA_DIR = Path("data")
 INPUT_DIR = DATA_DIR / "raw"
 OUTPUT_DIR = DATA_DIR / "processed"
 
-SCHEMAS = {
+SCHEMA = {
     "categories": {
         "primary_key": "category_id",
         "required": ["name"],
@@ -24,6 +24,8 @@ SCHEMAS = {
         "primary_key": "order_id",
         "required": ["customer_id", "order_date", "status"],
         "string": ["status", "payment_method", "tracking_code", "notes"],
+        "categorical": ["status", "payment_method"],
+        "datetime": ["order_date", "estimated_delivery"]
     },
     "order_items": {
         "required": ["product_id", "quantity"],
@@ -32,31 +34,14 @@ SCHEMAS = {
         "primary_key": "product_id",
         "required": ["name", "category_id", "price_brl"],
         "string": ["name", "description", "specs", "status"],
+        "categorical": ["status"],
+        "datetime": ["created_at"],
     },
     "promotions": {
         "primary_key": "promotion_id",
         "required": ["product_id", "discount_percent"],
         "string": ["description"],
     },
-}
-
-# Required fields
-REQUIRED_COLS = {
-    "categories": ["name"],
-    "customers": ["name"],
-    "orders": ["customer_id", "order_date", "status"],
-    "order_items": ["product_id", "quantity"],
-    "products": ["name", "category_id", "price_brl"],
-    "promotions": ["product_id", "discount_percent"]
-}
-
-# Primary keys
-PRIMARY_KEYS = {
-    "categories": ["category_id"],
-    "customers": ["customer_id"],
-    "orders": ["order_id"],
-    "products": ["product_id"],
-    "promotions": ["promotion_id"]
 }
 
 FOREIGN_KEYS = [
@@ -67,49 +52,32 @@ FOREIGN_KEYS = [
     ("promotions", "product_id", "products", "product_id")
 ]
 
-# Text columns to normalize
-STRING_COLS = {
-    "categories": ["name", "description"],
-    "customers": ["name", "city"],
-    "orders": ["status", "payment_method", "tracking_code", "notes"],
-    "products": ["name", "description", "specs", "status"],
-    "promotions": ["description"]
-}
-
-# Date columns
-DATE_COLS = {
-    "orders": ["order_date", "estimated_delivery"],
-    "products": ["created_at"]
-}
-
-# Controlled categorical columns
-CATEGORICAL_COLS = {
-    "orders": ["status", "payment_method"],
-    "products": ["status"]
-}
 
 def normalize(df, name):
-    for col in STRING_COLS.get(name, []):
+    schema = SCHEMA.get(name)
+    for col in schema.get("string", []):
         if col in df.columns:
             df[col] = df[col].astype("string").str.normalize('NFKD').str.strip()
-
-    for col in CATEGORICAL_COLS.get(name, []):
+    
+    for col in schema.get("categorical", []):
         if col in df.columns:
             df[col] = df[col].str.casefold()
-
-    for col in DATE_COLS.get(name, []):
+    
+    for col in schema.get("datetime", []):
         if col in df.columns:
             df[col] = pd.to_datetime(
                 df[col],
                 errors="coerce"
             )
+
     df = df.drop_duplicates()
 
     return df
     
 def validate_primary_keys(df, name):
     # Validate primary key uniqueness
-    for key in PRIMARY_KEYS.get(name, []):
+    key = SCHEMA.get(name).get("primary_key")
+    if key:
         if df[key].duplicated().any():
             raise ValueError(
                 f"Duplicate primary keys in {name}.{key}"
@@ -120,7 +88,8 @@ def validate_primary_keys(df, name):
             )
 
 def validate_required_fields(df, name):
-    for col in REQUIRED_COLS.get(name, []):
+    schema = SCHEMA.get(name)
+    for col in schema.get("required", []):
         if df[col].isna().any() or df[col].dtype == "object":
             raise ValueError(
                 f"Missing values in required field {name}.{col}"
@@ -162,7 +131,7 @@ def preprocess(files):
     for file_path in files:
         name = file_path.stem.rsplit(" - ", 1)[-1]
 
-        if name not in REQUIRED_COLS:
+        if name not in SCHEMA:
             continue
 
         df = pd.read_csv(file_path, encoding="utf-8")
